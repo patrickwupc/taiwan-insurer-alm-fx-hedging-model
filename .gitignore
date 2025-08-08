@@ -1,0 +1,31 @@
+# .gitignore
+
+# ignore node_modules
+
+# ignore macOS system fiiles
+.DS_Store
+
+# ignore virtual environment
+venv/
+
+# ignore Python cache files
+__pycache__/
+
+# ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# ignore Python bytecode files
+*.pyc
+
+# ignore log files
+*.log
+
+# ignore coverage reports
+coverage.xml
+
+# ignore downloaded csv data
+data/etf_data.csv
+data/fx_data.csv
+
+#ignore chrome drive 
+chromedriver/
