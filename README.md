@@ -21,11 +21,12 @@ The final deliverable will be a **simulation framework** to help:
 This project utilizes **real-world financial data**:
 
 - **TWD/USD Exchange Rates** – Daily spot rates.  
-- **Forward Market Data** – Daily 3-month, 6-month, and 1-year forward rates and points.  
-- **Interest Rates** – Daily interest rates for both the U.S. and Taiwan.  
+- **Interest Rates** – Daily interest rates for both the U.S. and Taiwan. And using the interest rate parity formula, we derive the 3m, 6m, and 1y forwad rates and spots. Backtesting it against the spot rates shows accuracy
 - **U.S. Corporate Bond Yields** – Daily yields for:
   - ICE BofA 7–10 Year U.S. Corporate Index (`BAMLC4A0C710YEY`)
   - ICE BofA 10–15 Year U.S. Corporate Index (`BAMLC4A0C1015YEY`)  
+
+
 
 These serve as robust proxies for the **high-quality long-term corporate bonds** typically held by Taiwanese insurers.
 
