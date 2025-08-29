@@ -25,9 +25,6 @@ This project utilizes **real-world financial data**:
 - **U.S. Corporate Bond Yields** – Daily yields for:
   - ICE BofA 7–10 Year U.S. Corporate Index (`BAMLC4A0C710YEY`)
   - ICE BofA 10–15 Year U.S. Corporate Index (`BAMLC4A0C1015YEY`)  
-
-
-
 These serve as robust proxies for the **high-quality long-term corporate bonds** typically held by Taiwanese insurers.
 
 ---
@@ -47,28 +44,25 @@ The project structure is designed for **clarity and reusability**:
 
 ---
 
-## 📌 Current Progress & Key Observations
-- **Data Acquisition** – All necessary financial data has been collected and aligned to a **daily frequency**.
-- **Validation** – Initial checks confirm that forward points are **consistent with interest rate parity**.
+📌 Project Status
+Current Progress & Key Achievements
+Data Integration & Validation: Successfully collected, aligned, and validated financial data on a daily frequency, confirming consistency with interest rate parity.
 
----
+Core Model Development: Constructed the Insurer class and core functions to simulate the financial performance of a life insurer's portfolio under various market conditions.
 
-## 🚀 Next Steps
-1. **Build the `Insurer` Class**  
-   Implement core methods for calculating bond returns and applying hedging strategies.
+Foundational Simulation: Built and executed a time-series simulation framework to analyze a range of insurer profiles and hedging strategies.
 
-2. **Develop the Simulation Framework**  
-   Run daily simulations to analyze different insurer profiles.
+🚀 Future Enhancements
+Comprehensive Scenario Analysis: Expanding the simulation to evaluate the impact of a wider range of hedging ratios and market scenarios.
 
-3. **Scenario Analysis**  
-   Evaluate the impact of different hedging ratios (e.g., **50% vs 70%**).
+Advanced Hedging Strategy Integration: Incorporating and assessing the effectiveness of alternative instruments, including:
 
-4. **Visualize Results**  
-   Create clear and informative charts to present findings.
+Cross-currency swaps
 
-5. **Hedging Instrument Testing**  
-   Incorporate and assess the effectiveness of:
-   - Cross-currency swaps
-   - Options
-   - Non-Deliverable Forwards (NDFs)  
-   in mitigating portfolio losses during FX volatility.
+Options
+
+Non-Deliverable Forwards (NDFs)
+
+FEVR Integration: Developing a new model component to manage and project the FX Valuation Reserve (FEVR), aiming to align the framework with Taiwan's regulatory standards.
+
+Enhanced Visualization: Creating more interactive and detailed charts to present complex findings and key trade-offs.

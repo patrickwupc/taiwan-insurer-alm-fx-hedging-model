@@ -24,7 +24,7 @@ class Insurer:
         # Derived initial values
         self.foreign_assets_twd = self.total_assets_twd * self.foreign_asset_ratio
         self.usd_assets_usd = self.foreign_assets_twd * self.usd_denom_ratio / self.initial_twd_usd_spot
-        self.unhedged_usd_assets_usd = self.usd_assets_usd # Will be adjusted by hedge ratio
+        self.unhedged_usd_assets_usd = self.usd_assets_usd  # Will be adjusted by hedge ratio
 
         # To store historical performance, for ananlysis and visulization
         self.history = pd.DataFrame(columns=['Date', 'TWD_USD_Spot', 'USD_Assets_TWD',
@@ -49,10 +49,11 @@ class Insurer:
                                    forward_rate, tenor_length_months,
                                    period_length_months = 1,
                                    cost_bps_annual=30.0,
-                                   accrue=True):
+                                   accrue=True,
+                                   impact_k=0.0005):
         
 
-        if self.hedge_ratio == 0:
+        if hedge_ratio == 0:
             total_hedging_cost_twd = 0
             unhedged_notional_usd = self.usd_assets_usd
             # Calculate FX impact on the entire portfolio and return with zero cost
@@ -69,16 +70,23 @@ class Insurer:
             forward_points = forward_rate - previous_twd_usd_spot  # TWD per USD
 
             # execution/credit cost as a haircut on the forward points (annualized bps as 30, reasoning explained in README)
-            tenor_fraction = tenor_length_months / 12.0
-            cost_points = previous_twd_usd_spot * (cost_bps_annual / 100.0) * tenor_fraction
+            tenor_years = tenor_length_months / 12.0
+            hr = hedge_ratio
+            impact_bps = impact_k * (hr ** 2)                 # e.g., impact_k in bps at hr=1.0
+            exec_convex_twd = - (impact_bps / 10000.0) * current_twd_usd_spot \
+                  * hedged_notional_usd * tenor_years * (period_length_months/tenor_length_months)
 
             # Effective points after cost
-            effective_points = forward_points - cost_points  # worse for us
+            effective_points = forward_points - cost_points  
+
+            convex_cost_twd = impact_k * (hedged_notional_usd ** 2) * (period_length_months / tenor_length_months)
+            effective_points -= convex_cost_twd / hedged_notional_usd
 
             # Hedging cost booking:
             # - accrue=True: recognize proportionally each step (smooth, simple), i.e if three months
             # foward contract, divide the cost (forward- spot) by three to account the cost monthly/ by step
             # - accrue=False: book full points once (use only on trade date, not every step)
+            
             if accrue:
                 hedge_points_present_step = effective_points * (period_length_months / tenor_length_months)
             else:
@@ -114,7 +122,7 @@ class Insurer:
         # Convert that USD P&L to TWD at current spot (simple assumption)
         investment_income_twd = total_investment_return_usd * current_twd_usd_spot
 
-        # 2 Hedge effect (uses the forward tenor you pass in)
+        # 2 Hedge effect (uses the forward tenor as arguments
         net_fx_impact_twd, total_hedging_cost_twd = self.apply_hedging_strategy_forward(
             hedge_ratio,
             current_twd_usd_spot, previous_twd_usd_spot,
@@ -147,26 +155,30 @@ class Insurer:
         return investment_income_twd, net_fx_impact_twd, total_hedging_cost_twd
 
     def simulate_day(self, date, current_twd_usd_spot, previous_twd_usd_spot,
-                     current_us_bond_yield, previous_us_bond_yield,
-                     forward_rate, tenor_length_months):
-        
+                 current_us_bond_yield, previous_us_bond_yield,
+                 forward_rate, tenor_length_months,
+                 previous_forward_rate=None):  ## implementin Mark to Market mechanic
+
         interest_income_usd, capital_gain_loss_usd = self.calculate_bond_return(
             current_us_bond_yield, previous_us_bond_yield
         )
-        total_investment_return_usd = interest_income_usd + capital_gain_loss_usd
+        investment_income_twd = (interest_income_usd + capital_gain_loss_usd) * current_twd_usd_spot
 
-        investment_income_twd = total_investment_return_usd * current_twd_usd_spot
-        
-        # Corrected line: Pass the self.hedge_ratio attribute
-        net_fx_impact_twd, total_hedging_cost_twd = self.apply_hedging_strategy_forward(
-            hedge_ratio=self.hedge_ratio, # Added the missing argument
+        # Base hedge accrual/cost
+        net_fx_impact_twd, hedging_cost_twd = self.apply_hedging_strategy_forward(
+            hedge_ratio=self.hedge_ratio,
             current_twd_usd_spot=current_twd_usd_spot,
             previous_twd_usd_spot=previous_twd_usd_spot,
             forward_rate=forward_rate,
             tenor_length_months=tenor_length_months
         )
 
-    
+        # NEW: forward MTM from curve shift (simple proxy)
+        if previous_forward_rate is not None and self.hedge_ratio and self.hedge_ratio > 0:
+            hedged_notional_usd = self.usd_assets_usd * self.hedge_ratio
+            # MTM in TWD ≈ notional * (oldF - newF)
+            forward_mtm_twd = hedged_notional_usd * (previous_forward_rate - forward_rate)
+            net_fx_impact_twd += forward_mtm_twd
 
         total_pnl = investment_income_twd + net_fx_impact_twd
         self.equity += total_pnl
@@ -176,15 +188,40 @@ class Insurer:
             'TWD_USD_Spot': current_twd_usd_spot,
             'USD_Assets_TWD': self.usd_assets_usd * current_twd_usd_spot,
             'Net_FX_Impact': net_fx_impact_twd,
-            'Hedging_Cost': total_hedging_cost_twd,
+            'Hedging_Cost': hedging_cost_twd,
             'Investment_Income_TWD': investment_income_twd,
             'Equity': self.equity,
             'FEVR_Balance': self.fevr_balance
         }])], ignore_index=True)
-        
-        self.usd_assets_usd += total_investment_return_usd
+
+        # optional: keep USD assets compounding
+        self.usd_assets_usd += (interest_income_usd + capital_gain_loss_usd)
 
 
 
 
+def run_simulation(insurer, df_data, forward_col, tenor_length_months):
+    previous_twd_usd_spot   = df_data.iloc[0]['spot']
+    previous_us_bond_yield  = df_data.iloc[0]['yield_10Y']
+    previous_forward_rate   = df_data.iloc[0].get(forward_col, previous_twd_usd_spot)
 
+    for index, row in df_data.iterrows():
+        current_twd_usd_spot  = row['spot']
+        current_us_bond_yield = row['yield_10Y']
+        current_forward_rate  = row.get(forward_col, current_twd_usd_spot)
+
+        insurer.simulate_day(
+            date=index,
+            current_twd_usd_spot=current_twd_usd_spot,
+            previous_twd_usd_spot=previous_twd_usd_spot,
+            current_us_bond_yield=current_us_bond_yield,
+            previous_us_bond_yield=previous_us_bond_yield,
+            forward_rate=current_forward_rate,
+            tenor_length_months=tenor_length_months,
+            previous_forward_rate=previous_forward_rate  # NEW
+        )
+        previous_twd_usd_spot  = current_twd_usd_spot
+        previous_us_bond_yield = current_us_bond_yield
+        previous_forward_rate  = current_forward_rate
+
+    return insurer.history
