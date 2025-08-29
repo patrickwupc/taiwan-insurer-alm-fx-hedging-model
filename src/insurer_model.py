@@ -48,60 +48,65 @@ class Insurer:
                                    current_twd_usd_spot, previous_twd_usd_spot,
                                    forward_rate, tenor_length_months,
                                    period_length_months = 1,
-                                   cost_bps_annual=30.0,
+                                   previous_forward_rate = None,
                                    accrue=True,
-                                   impact_k=0.0005):
+                                   cost_bps_annual = 30.0, 
+                                   impact_k_bps = 20 ):
         
+        usd_notional = self.usd_assets_usd
+        if hedge_ratio <= 0 or usd_notional == 0:
+            fx_unhedged_twd = usd_notional * (current_twd_usd_spot - previous_twd_usd_spot)
+            return fx_unhedged_twd, {
+                'fx_unhedged_twd': fx_unhedged_twd,
+                'hedge_carry_twd': 0.0, 'hedge_mtm_twd': 0.0,
+                'exec_linear_twd': 0.0, 'exec_convex_twd': 0.0,
+                'hedged_notional_usd': 0.0
+            }
 
-        if hedge_ratio == 0:
-            total_hedging_cost_twd = 0
-            unhedged_notional_usd = self.usd_assets_usd
-            # Calculate FX impact on the entire portfolio and return with zero cost
-            fx_impact_unhedged_twd = unhedged_notional_usd * (current_twd_usd_spot - previous_twd_usd_spot)
-            net_fx_impact_twd = fx_impact_unhedged_twd
-            return net_fx_impact_twd, total_hedging_cost_twd
 
-        else:
-            # Hedged / unhedged notionals
-            hedged_notional_usd = self.usd_assets_usd * hedge_ratio
-            unhedged_notional_usd = self.usd_assets_usd * (1 - hedge_ratio)
+        # notionals
+        hedged_usd  = usd_notional * hedge_ratio
+        unhedged_usd = usd_notional * (1 - hedge_ratio)
 
-            # Forward points at entry (market mid)
-            forward_points = forward_rate - previous_twd_usd_spot  # TWD per USD
+        tenor_years = tenor_length_months / 12.0
+        step_frac  = period_length_months / float(tenor_length_months)
 
-            # execution/credit cost as a haircut on the forward points (annualized bps as 30, reasoning explained in README)
-            tenor_years = tenor_length_months / 12.0
-            hr = hedge_ratio
-            impact_bps = impact_k * (hr ** 2)                 # e.g., impact_k in bps at hr=1.0
-            exec_convex_twd = - (impact_bps / 10000.0) * current_twd_usd_spot \
-                  * hedged_notional_usd * tenor_years * (period_length_months/tenor_length_months)
+        # 1) Unhedged FX
+        fx_unhedged_twd = unhedged_usd * (current_twd_usd_spot - previous_twd_usd_spot)
 
-            # Effective points after cost
-            effective_points = forward_points - cost_points  
+        # 2) Carry (points over tenor: (F/S - 1)*S). For a short USD forward, carry is NEGATIVE if F>S.
+        carry_points_step = (forward_rate / previous_twd_usd_spot - 1.0) * previous_twd_usd_spot * step_frac
+        hedge_carry_twd   = -hedged_usd * carry_points_step
 
-            convex_cost_twd = impact_k * (hedged_notional_usd ** 2) * (period_length_months / tenor_length_months)
-            effective_points -= convex_cost_twd / hedged_notional_usd
+        # 3) Forward MTM from curve shift (optional; book when you pass previous_forward_rate)
+        hedge_mtm_twd = 0.0
+        if previous_forward_rate is not None:
+            hedge_mtm_twd = - hedged_usd * (forward_rate - previous_forward_rate)
 
-            # Hedging cost booking:
-            # - accrue=True: recognize proportionally each step (smooth, simple), i.e if three months
-            # foward contract, divide the cost (forward- spot) by three to account the cost monthly/ by step
-            # - accrue=False: book full points once (use only on trade date, not every step)
-            
-            if accrue:
-                hedge_points_present_step = effective_points * (period_length_months / tenor_length_months)
-            else:
-                hedge_points_present_step = effective_points
+        # 4) Execution/credit COST (linear bps per year) — NEGATIVE
+        linear_points_tenor = previous_twd_usd_spot * (cost_bps_annual / 100.0) * tenor_years
+        exec_linear_twd = - hedged_usd * (linear_points_tenor * (step_frac if accrue else 1.0))
 
-            # This period's hedging cost in TWD
-            total_hedging_cost_twd = hedged_notional_usd * hedge_points_present_step
+        # 5) Convex impact COST (in bps, convex in hedge ratio) — NEGATIVE
+        # impact bps at full hedge times hr^2, applied per year on notional, then scaled to step
+        impact_bps = impact_k_bps * (hedge_ratio ** 2)
+        impact_points_tenor = previous_twd_usd_spot * (impact_bps / 10000.0) * tenor_years
+        exec_convex_twd = - hedged_usd * (impact_points_tenor * (step_frac if accrue else 1.0))
 
-            # FX impact on the unhedged portion
-            fx_impact_unhedged_twd = unhedged_notional_usd * (current_twd_usd_spot - previous_twd_usd_spot)
+        # Assemble this step’s hedge+FX effect
+        net_fx_impact_twd = (
+            fx_unhedged_twd + hedge_carry_twd + hedge_mtm_twd + exec_linear_twd + exec_convex_twd
+        )
 
-            # Net FX impact (unhedged FX + accrued hedge cost)
-            net_fx_impact_twd = fx_impact_unhedged_twd + total_hedging_cost_twd
-            
-            return net_fx_impact_twd, total_hedging_cost_twd
+        components = {
+            'fx_unhedged_twd': fx_unhedged_twd,
+            'hedge_carry_twd': hedge_carry_twd,
+            'hedge_mtm_twd':   hedge_mtm_twd,
+            'exec_linear_twd': exec_linear_twd,
+            'exec_convex_twd': exec_convex_twd,
+            'hedged_notional_usd': hedged_usd
+        }
+        return net_fx_impact_twd, components
     
     def simulate_month_forward(self, date,
                            current_twd_usd_spot, previous_twd_usd_spot,
@@ -129,6 +134,7 @@ class Insurer:
             forward_rate, tenor_length_months,
             period_length_months=period_length_months,
             cost_bps_annual=cost_bps_annual,
+            previous_forward_rate=None,
             accrue=accrue
         )
 
@@ -156,7 +162,7 @@ class Insurer:
 
     def simulate_day(self, date, current_twd_usd_spot, previous_twd_usd_spot,
                  current_us_bond_yield, previous_us_bond_yield,
-                 forward_rate, tenor_length_months,
+                 forward_rate, tenor_length_months, 
                  previous_forward_rate=None):  ## implementin Mark to Market mechanic
 
         interest_income_usd, capital_gain_loss_usd = self.calculate_bond_return(
@@ -165,21 +171,19 @@ class Insurer:
         investment_income_twd = (interest_income_usd + capital_gain_loss_usd) * current_twd_usd_spot
 
         # Base hedge accrual/cost
-        net_fx_impact_twd, hedging_cost_twd = self.apply_hedging_strategy_forward(
+        net_fx_impact_twd, components = self.apply_hedging_strategy_forward(
             hedge_ratio=self.hedge_ratio,
             current_twd_usd_spot=current_twd_usd_spot,
             previous_twd_usd_spot=previous_twd_usd_spot,
             forward_rate=forward_rate,
+            previous_forward_rate=previous_forward_rate,
             tenor_length_months=tenor_length_months
         )
 
-        # NEW: forward MTM from curve shift (simple proxy)
-        if previous_forward_rate is not None and self.hedge_ratio and self.hedge_ratio > 0:
-            hedged_notional_usd = self.usd_assets_usd * self.hedge_ratio
-            # MTM in TWD ≈ notional * (oldF - newF)
-            forward_mtm_twd = hedged_notional_usd * (previous_forward_rate - forward_rate)
-            net_fx_impact_twd += forward_mtm_twd
+        # Total hedging cost components (negative values)
+        hedging_cost_twd = -(components['exec_linear_twd'] + components['exec_convex_twd'] ) # positive 
 
+        # NEW: forward MTM from curve shift (simple proxy)
         total_pnl = investment_income_twd + net_fx_impact_twd
         self.equity += total_pnl
 
@@ -197,6 +201,7 @@ class Insurer:
         # optional: keep USD assets compounding
         self.usd_assets_usd += (interest_income_usd + capital_gain_loss_usd)
 
+        return investment_income_twd, net_fx_impact_twd, hedging_cost_twd
 
 
 
@@ -209,6 +214,7 @@ def run_simulation(insurer, df_data, forward_col, tenor_length_months):
         current_twd_usd_spot  = row['spot']
         current_us_bond_yield = row['yield_10Y']
         current_forward_rate  = row.get(forward_col, current_twd_usd_spot)
+        
 
         insurer.simulate_day(
             date=index,
@@ -217,8 +223,8 @@ def run_simulation(insurer, df_data, forward_col, tenor_length_months):
             current_us_bond_yield=current_us_bond_yield,
             previous_us_bond_yield=previous_us_bond_yield,
             forward_rate=current_forward_rate,
-            tenor_length_months=tenor_length_months,
-            previous_forward_rate=previous_forward_rate  # NEW
+            previous_forward_rate = previous_forward_rate, # NEW
+            tenor_length_months=tenor_length_months
         )
         previous_twd_usd_spot  = current_twd_usd_spot
         previous_us_bond_yield = current_us_bond_yield
